@@ -908,6 +908,9 @@ Should be set via .dir-locals.el.")
 It takes precedence over the test-dir for the project type when set.
 Should be set via .dir-locals.el.")
 
+(defvar projectile-project-build-configuration "default"
+  "Use this variable to define current projectile build configuration")
+
 
 ;;; Version information
 
@@ -2353,6 +2356,8 @@ Subroutine for `projectile-find-file-dwim' and
                       (projectile-completing-read "Switch to: " project-files))))
          (ff (or ff-variant #'find-file)))
     (funcall ff (expand-file-name file project-root))
+    ;; try to (re)read project file
+    (projectile-configure-on-project-switch)
     (run-hooks 'projectile-find-file-hook)))
 
 ;;;###autoload
@@ -2575,6 +2580,8 @@ defun, use that instead of `dired'.  A typical example of such a defun would be
          (dir (projectile-complete-dir project))
          (dired-v (or dired-variant #'dired)))
     (funcall dired-v (expand-file-name dir project))
+    ;; try to (re)read project file
+    (projectile-configure-on-project-switch)
     (run-hooks 'projectile-find-dir-hook)))
 
 ;;;###autoload
@@ -5613,6 +5620,8 @@ With a prefix ARG invokes `projectile-commander' instead of
       ;; have lost that change, so switch back to the correct buffer.
       (when (buffer-live-p switched-buffer)
         (switch-to-buffer switched-buffer)))
+    ;; try to (re)read project file
+    (projectile-configure-on-project-switch)
     (run-hooks 'projectile-after-switch-project-hook)))
 
 ;;;###autoload
@@ -5631,7 +5640,9 @@ This command will first prompt for the directory the file is in."
           (find-file (expand-file-name file directory))
           (run-hooks 'projectile-find-file-hook))
       ;; target directory is not in a project
-      (projectile-find-file))))
+      (projectile-find-file)
+      ;; try to (re)read project file
+      (projectile-configure-on-project-switch))))
 
 (defun projectile-all-project-files ()
   "Get a list of all files in all projects."
@@ -6053,6 +6064,73 @@ If the current buffer does not belong to a project, call `previous-buffer'."
         (save-buffer)))))
 
 
+;;; Working with project file
+(defun projectile--file-to-s-exp (file)
+  (with-temp-buffer
+    (insert-file-contents file)
+    (read
+     (buffer-substring-no-properties
+      (point-min)
+      (point-max)))))
+
+(defun projectile--value-by-keyword (keyword list)
+  (cond
+   ((null list) nil)
+   ((eq keyword (car list)) (cadr list))
+   (t (projectile--value-by-keyword keyword (cdr list)))))
+
+(defun projectile--build-profile-content (name profiles)
+  (cond
+   ((null profiles) nil)
+   ((eq name (caar profiles)) (cdar profiles))
+   (t (projectile--build-profile-content name (cdr profiles)))))
+
+(defun projectile-set-project-type (config-list)
+  (let ((project-type (projectile--value-by-keyword :type config-list)))
+    (when project-type
+      (setq projectile-project-type project-type))))
+
+(defun projectile-set-project-cmds (config-list)
+  (let* ((build-profile-name (or (intern (projectile--value-by-keyword :current-build-profile config-list))
+                                 (intern projectile-project-default-build-configuration)))
+         (build-profile-list (projectile--value-by-keyword :build-profiles config-list))
+         (build-profile-content (projectile--build-profile-content build-profile-name build-profile-list))
+         )
+    (when build-profile-content
+      ;; set projectile commands
+      ;; bootstrap
+      (let ((cmd (projectile--value-by-keyword :bootstrap build-profile-content)))
+        (when cmd (setq projectile-project-bootstrap-cmd cmd)))
+      ;; configure
+      (let ((cmd (projectile--value-by-keyword :configure build-profile-content)))
+        (when cmd (message "%s" cmd) (setq projectile-project-configure-cmd cmd)))
+      ;; compilation
+      (let ((cmd (projectile--value-by-keyword :compilation build-profile-content)))
+        (when cmd (setq projectile-project-compilation-cmd cmd)))
+      ;; test
+      (let ((cmd (projectile--value-by-keyword :test build-profile-content)))
+        (when cmd (setq projectile-project-test-cmd cmd)))
+      ;; install
+      (let ((cmd (projectile--value-by-keyword :install build-profile-content)))
+        (when cmd (setq projectile-project-install-cmd cmd)))
+      ;; package
+      (let ((cmd (projectile--value-by-keyword :package build-profile-content)))
+        (when cmd (setq projectile-project-package-cmd cmd)))
+      ;; run
+      (let ((cmd (projectile--value-by-keyword :run build-profile-content)))
+        (when cmd (setq projectile-project-run-cmd cmd)))
+      ;;
+      )
+    ))
+
+(defun projectile-configure-on-project-switch ()
+  (let* ((root-dir (projectile-project-p))
+         (project-file (when root-dir (concat root-dir projectile-dirconfig-file)))
+         (project-content (when (and project-file (file-exists-p project-file)) (projectile--file-to-s-exp project-file))))
+    (when project-content
+      (projectile-set-project-type project-content)
+      (projectile-set-project-cmds project-content))))
+
 ;;; Projectile Minor mode
 
 (defcustom projectile-mode-line-prefix
@@ -6360,9 +6438,10 @@ Otherwise behave as if called interactively.
       (projectile-discover-projects-in-search-path))
     (add-hook 'project-find-functions #'project-projectile)
     (add-hook 'find-file-hook 'projectile-find-file-hook-function)
-    (add-hook 'post-command-hook 'dynamic-projectile-mode-map-hook-function)
     (add-hook 'projectile-find-dir-hook #'projectile-track-known-projects-find-file-hook t)
     (add-hook 'dired-before-readin-hook #'projectile-track-known-projects-find-file-hook t t)
+    (add-hook 'buffer-list-update-hook #'dynamic-projectile-mode-map-hook-function)
+    (add-hook 'prog-mode-hook #'projectile-configure-on-project-switch)
     (advice-add 'compilation-find-file :around #'compilation-find-file-projectile-find-compilation-buffer)
     (advice-add 'delete-file :before #'delete-file-projectile-remove-from-cache))
    (t

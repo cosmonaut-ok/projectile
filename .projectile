@@ -1,0 +1,26 @@
+(project
+ :type "autotools"
+ :current-buld-profile "default"
+ :build-profiles (
+		  (default
+		    :bootstrap "./autogen.sh"
+		    :configure "./configure"
+		    :compilation "make -k"
+		    :run "./micro -c ./micro.conf"
+		    )
+		  (debug
+		   :bootstrap "./autogen.sh"
+		   :configure "./configure --enable-debug"
+		   :compilation "make"
+		   :run "./micro -c ./micro.conf"
+		   )
+		  )
+ :test-prefix "test"
+ :test-suffix "test"
+ :src-dir "src"
+ :test-dir "test"
+ :variables (
+	     (var1 val1)
+	     (var2 val2)
+	     )
+ )
